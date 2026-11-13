@@ -4,6 +4,8 @@
 #   lib/            atlas_doorbell.{h,c}: the interrupt side (glossy's machine_software_interrupt_callback + CLINT msip).
 #                   The only file that knows how the interrupt reaches the host; port it to move the tests elsewhere.
 #                   fault_exit.c: an unexpected exception prints its cause and exits 9 instead of hanging.
+#   common/         what the matmul tests share: the Atlas team's matmul kernel and data (matmul_data.h), launch and
+#                   poll helpers, the host's own job, a watchdog, and the same matmul on Saturn (fp8_matmul.S).
 #   interrupt_cost/ atlas_doorbell_interrupt_cost: cost of one doorbell interrupt through glossy, and which clocks
 #                   run while the host sleeps in wfi.
 #
