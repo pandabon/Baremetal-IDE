@@ -14,6 +14,8 @@
 #   edge_cases/     atlas_doorbell_edge_cases: no doorbell, an Atlas error, a re-ring, a handler that starts the next job.
 #   host_matmul/    atlas_doorbell_host_matmul: the same FP8 matmul on the host with Saturn vectors, for comparison.
 #   overlap_saturn/ atlas_doorbell_overlap_saturn: Atlas and Saturn each compute the matmul at the same time.
+#   frame_pipeline/ atlas_doorbell_frame_pipeline: Atlas runs matmul and GELU jobs, scheduled from the doorbell,
+#                   while the host prepares camera-frame patches; atlas_jobs.h holds the jobs and their data.
 #
 #   make build CHIP=penguin26 PLATFORM=SIMS TARGET=atlas_doorbell_interrupt_cost
 ########################################################################################################################
@@ -38,7 +40,7 @@ function(atlas_doorbell_test name dir)
 endfunction()
 
 atlas_doorbell_test(atlas_doorbell_interrupt_cost interrupt_cost)
-foreach(_t poll_baseline overlap check_in_handler edge_cases host_matmul overlap_saturn)
+foreach(_t poll_baseline overlap check_in_handler edge_cases host_matmul overlap_saturn frame_pipeline)
   if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_t})
     atlas_doorbell_test(atlas_doorbell_${_t} ${_t})
   endif()
