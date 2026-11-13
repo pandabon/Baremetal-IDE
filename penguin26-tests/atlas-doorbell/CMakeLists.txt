@@ -1,9 +1,8 @@
 ########################################################################################################################
 # Atlas doorbell tests for the penguin26 chip: Atlas signals completion with an interrupt instead of being polled.
 #
-#   lib/            atlas_doorbell.{h,c}: the interrupt side (glossy's machine_software_interrupt_callback + CLINT msip).
-#                   The only file that knows how the interrupt reaches the host; port it to move the tests elsewhere.
-#                   fault_exit.c: an unexpected exception prints its cause and exits 9 instead of hanging.
+#   (The doorbell interrupt itself is the platform's atlas-irq-timestamps library: platform/penguin26/include/hal_atlas_irq.h.)
+#   lib/            fault_exit.c: an unexpected exception prints its cause and exits 9 instead of hanging.
 #   common/         what the matmul tests share: the Atlas team's matmul kernel and data (matmul_data.h), launch and
 #                   poll helpers, the host's own job, a watchdog, and the same matmul on Saturn (fp8_matmul.S).
 #   interrupt_cost/ atlas_doorbell_interrupt_cost: cost of one doorbell interrupt through glossy, and which clocks
@@ -21,9 +20,9 @@
 ########################################################################################################################
 
 file(GLOB _common_srcs CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/common/*.c ${CMAKE_CURRENT_SOURCE_DIR}/common/*.S)
-add_library(atlas-doorbell STATIC lib/atlas_doorbell.c ${_common_srcs})
-target_include_directories(atlas-doorbell PUBLIC lib common)
-target_link_libraries(atlas-doorbell PUBLIC chip-config rocketcore)
+add_library(atlas-doorbell STATIC ${_common_srcs})
+target_include_directories(atlas-doorbell PUBLIC common)
+target_link_libraries(atlas-doorbell PUBLIC atlas-irq-timestamps chip-config rocketcore)   # the tests print timestamps
 
 # One executable per test, linked the way penguin26-tests/atlas_example is.
 # Each test is every .c and .S file in its folder.

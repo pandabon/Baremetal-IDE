@@ -34,7 +34,7 @@
 #include "chip_config.h"
 #include "rocketcore.h"
 #include "riscv_encoding.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 
 #define RINGS        10
 #define DELAY_LOOPS  1000   /* long enough for the interrupt to arrive inside the loop */
@@ -48,10 +48,10 @@ static __attribute__((noinline)) void delay_loop(void) {
   asm volatile("1: addi %0, %0, -1\n\tbnez %0, 1b" : "+r"(n));
 }
 
-/* Time the delay loop alone; atlas_doorbell_ack() is the same kind of CLINT access as the ring. */
+/* Time the delay loop alone; atlas_irq_ack() is the same kind of CLINT access as the ring. */
 static uint64_t time_base(void) {
   uint64_t t0 = get_cycles();
-  atlas_doorbell_ack();
+  atlas_irq_ack();
   delay_loop();
   return get_cycles() - t0;
 }
@@ -88,29 +88,29 @@ int app_main() {
   printf("read_cost mcycle_pair=%lu warm=%lu\n", (unsigned long)(c1 - c0), (unsigned long)(c3 - c2));
 
   /* (b) */
-  atlas_doorbell_init();
+  atlas_irq_init();
   for (int i = 0; i < RINGS; i++) {
     uint64_t base_cold = time_base();
     uint64_t base = time_base();
 
-    uint64_t before = atlas_doorbell.count;
+    uint64_t before = atlas_irq_count();
     enable_global_interrupt();
     uint64_t t0 = get_cycles();
-    atlas_doorbell_ring_self();
+    atlas_irq_ring_self();
     delay_loop();
     uint64_t with_irq = get_cycles() - t0;
-    uint64_t ring_to_entry = atlas_doorbell.last_entry - t0;
+    uint64_t ring_to_entry = atlas_irq_timestamps.entry - t0;
 
     /* round trip: ring, then wait for the callback to count it */
-    uint64_t mid = atlas_doorbell.count;
+    uint64_t mid = atlas_irq_count();
     uint64_t r0 = get_cycles();
-    atlas_doorbell_ring_self();
-    while (atlas_doorbell.count == mid) {
+    atlas_irq_ring_self();
+    while (atlas_irq_count() == mid) {
     }
     uint64_t round_trip = get_cycles() - r0;
     disable_global_interrupt();
 
-    uint64_t irqs = atlas_doorbell.count - before;
+    uint64_t irqs = atlas_irq_count() - before;
     if (irqs != 2) {
       fail = 1;
     }
@@ -118,7 +118,7 @@ int app_main() {
            (unsigned long)ring_to_entry, (unsigned long)base_cold, (unsigned long)base, (unsigned long)with_irq,
            (long)(with_irq - base), (unsigned long)round_trip, (unsigned long)irqs);
   }
-  atlas_doorbell_disable();
+  atlas_irq_disable();
 
   /* (c) */
   uint32_t hart = (uint32_t)get_hart_id();

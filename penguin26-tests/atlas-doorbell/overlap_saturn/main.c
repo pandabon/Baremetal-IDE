@@ -11,15 +11,15 @@
  *   atlas_alone   Atlas's matmul alone, polled (interrupts off): T_atlas.
  *   serial        today's way: start Atlas, poll until done, then Saturn's matmul. T_serial.
  *   overlap       start Atlas, turn interrupts on, run Saturn's matmul; the doorbell interrupts Saturn
- *                 wherever it is, the doorbell layer clears msip and counts, Saturn continues. T_total.
+ *                 wherever it is, the doorbell interrupt (hal_atlas_irq) clears msip and counts, Saturn continues. T_total.
  *                 speedup = T_serial / T_total of the same repeat.
  * Both units read the same inputs: Atlas from DRAM at MM_IN (its DMA), Saturn from the program's copy, so the
  * overlap also shows whether the two slow each other down (compare its phases with saturn_alone).
  *
- * Timeline stamps (mcycle, cycles from `start`, the stamp just before the start command), one "stamps" line per
+ * Timeline timestamps (mcycle, cycles from `start`, the timestamp just before the start command), one "timestamps" line per
  * overlap run: launched, irq_on, pre_end, mac_end, cvt_end (Saturn's phases end), cb_entry / cb_acked / cb_exit
  * (the doorbell callback started / cleared msip / finished), end (interrupts off). The doorbell can land in any
- * phase; the stamps show which.
+ * phase; the timestamps show which.
  *
  * Interrupting vector code: glossy's trap entry saves the 32 integer registers only, not the vector or FP
  * registers or vl/vtype. That is safe here because the doorbell callback is plain C built without the vector
@@ -28,7 +28,7 @@
  * Pass (return 0): in every overlap run exactly one doorbell, Atlas's output golden with STATUS 5 (ECALL), and
  * Saturn's output exact (4096 of 4096 bytes); the alone and serial runs correct too. A watchdog (1 s) exits with
  * code 3 if the doorbell never comes.
- * Output: 10 x (saturn_alone, atlas_alone, serial, overlap, stamps) lines of key=value, then *** PASSED *** or
+ * Output: 10 x (saturn_alone, atlas_alone, serial, overlap, timestamps) lines of key=value, then *** PASSED *** or
  * *** FAILED ***.
  */
 #include <stdio.h>
@@ -37,7 +37,7 @@
 
 #include "chip_config.h"
 #include "rocketcore.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 #include "atlas_run.h"
 #include "matmul_data.h"
 #include "fp8_matmul.h"
@@ -96,7 +96,7 @@ int app_main() {
   int failures = 0;
   saturn_times st;
 
-  atlas_doorbell_init();          /* doorbell callback only counts and stamps (no hook) */
+  atlas_irq_init();          /* doorbell callback only counts and timestamps (no hook) */
   atlas_run_load_doorbell();
 
   for (int rep = 0; rep < REPEATS; rep++) {
@@ -116,7 +116,7 @@ int app_main() {
     uint32_t status = atlas_run_poll(NULL);
     uint64_t t_atlas = get_cycles() - t0;
     ok = mm_check() && (status == ATLAS_STATUS_DONE);
-    atlas_doorbell_ack();
+    atlas_irq_ack();
     failures += !ok;
     printf("atlas_alone T_atlas=%lu ok=%d\n", (unsigned long)t_atlas, ok);
 
@@ -129,13 +129,13 @@ int app_main() {
     uint64_t t_serial = get_cycles() - t0;
     exact = saturn_exact();
     ok = mm_check() && (status == ATLAS_STATUS_DONE) && (exact == N);
-    atlas_doorbell_ack();
+    atlas_irq_ack();
     failures += !ok;
     printf("serial T_serial=%lu exact=%u ok=%d\n", (unsigned long)t_serial, exact, ok);
 
     /* overlap */
     mm_setup();
-    uint64_t count_before = atlas_doorbell.count;
+    uint64_t count_before = atlas_irq_count();
     watchdog_arm(WATCHDOG_TICKS);
     uint64_t start = get_cycles();
     atlas_run_start();
@@ -148,7 +148,7 @@ int app_main() {
     watchdog_off();
 
     exact = saturn_exact();
-    uint64_t doorbells = atlas_doorbell.count - count_before;
+    uint64_t doorbells = atlas_irq_count() - count_before;
     ok = (doorbells == 1) && mm_check() && (atlas_run_status() == ATLAS_STATUS_DONE) && (exact == N);
     failures += !ok;
     uint64_t total = end - start;
@@ -156,12 +156,12 @@ int app_main() {
            (unsigned long)total, (unsigned long)(st.cvt_end - st.start), (unsigned long)(st.pre_end - st.start),
            (unsigned long)(st.mac_end - st.pre_end), (unsigned long)(st.cvt_end - st.mac_end), exact,
            (unsigned long)doorbells, (unsigned long)(t_serial * 100 / total), ok);
-    printf("stamps launched=%lu irq_on=%lu pre_end=%lu mac_end=%lu cvt_end=%lu cb_entry=%lu cb_acked=%lu cb_exit=%lu "
+    printf("timestamps launched=%lu irq_on=%lu pre_end=%lu mac_end=%lu cvt_end=%lu cb_entry=%lu cb_acked=%lu cb_exit=%lu "
            "end=%lu\n",
            (unsigned long)(launched - start), (unsigned long)(irq_on - start), (unsigned long)(st.pre_end - start),
            (unsigned long)(st.mac_end - start), (unsigned long)(st.cvt_end - start),
-           (unsigned long)(atlas_doorbell.last_entry - start), (unsigned long)(atlas_doorbell.last_acked - start),
-           (unsigned long)(atlas_doorbell.last_exit - start), (unsigned long)(end - start));
+           (unsigned long)(atlas_irq_timestamps.entry - start), (unsigned long)(atlas_irq_timestamps.acked - start),
+           (unsigned long)(atlas_irq_timestamps.exit - start), (unsigned long)(end - start));
   }
 
   printf(failures ? "*** FAILED ***\n" : "*** PASSED ***\n");

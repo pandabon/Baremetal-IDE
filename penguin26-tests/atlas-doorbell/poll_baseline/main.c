@@ -10,7 +10,7 @@
  *           poll sees the halt; polls = number of STATUS reads; ok = result equals golden.
  *   doorbell the same matmul with the doorbell epilogue, polled. It shows what the epilogue costs: msip is
  *           set but nobody listens (interrupts are off), so ok also needs msip to be 1 afterwards. The host
- *           clears it with atlas_doorbell_ack().
+ *           clears it with atlas_irq_ack().
  *   serial  poll until Atlas is done, then run the host job (job sizes shorter than, about equal to and
  *           longer than the matmul; 4000 and 8000 are the overlap test's sizes), with the doorbell kernel. job = steps, T_job = the job alone,
  *           T_serial = start + poll + job, ok = same checksum as the job alone and golden result.
@@ -29,7 +29,7 @@
 
 #include "chip_config.h"
 #include "rocketcore.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 #include "atlas_run.h"
 
 #define REPEATS 10
@@ -68,7 +68,7 @@ static void run_serial(const char *label) {
 
     int ok = (checksum == reference);
     ok &= mm_check();
-    atlas_doorbell_ack();   /* the doorbell kernel set msip; nothing listens here */
+    atlas_irq_ack();   /* the doorbell kernel set msip; nothing listens here */
     ok = verify(ok, status);
     printf("%s job=%lu T_job=%lu T_serial=%lu ok=%d\n", label, (unsigned long)steps,
            (unsigned long)t_job, (unsigned long)t_serial, ok);
@@ -97,7 +97,7 @@ void app_init() {
 int app_main() {
   /* Only to start from a clean msip and stats. Global interrupts stay off for the whole test, so no
    * doorbell is ever taken here: the doorbell kernel's msip write just stays pending until we clear it. */
-  atlas_doorbell_init();
+  atlas_irq_init();
 
   for (int rep = 0; rep < REPEATS; rep++) {
     uint32_t status;
@@ -110,7 +110,7 @@ int app_main() {
     mm_setup();
     t_atlas = run_polled(&status, &polls);
     ok = mm_check();
-    atlas_doorbell_ack();
+    atlas_irq_ack();
     ok = verify(ok, status);
     printf("team T_atlas=%lu polls=%lu ok=%d\n", (unsigned long)t_atlas, (unsigned long)polls, ok);
 
@@ -120,7 +120,7 @@ int app_main() {
     t_atlas = run_polled(&status, &polls);
     ok = mm_check();
     int rang = (int)(CLINT->MSIP[get_hart_id()] & 1U);   /* the epilogue set msip */
-    atlas_doorbell_ack();
+    atlas_irq_ack();
     ok = verify(ok & rang, status);
     printf("doorbell T_atlas=%lu polls=%lu ok=%d\n", (unsigned long)t_atlas, (unsigned long)polls, ok);
 

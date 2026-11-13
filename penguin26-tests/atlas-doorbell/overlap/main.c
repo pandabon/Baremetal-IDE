@@ -7,7 +7,7 @@
  *
  * How it works: the doorbell kernel is loaded once. For each job size (4000 and 8000 steps, both longer than
  * the matmul) and 10 repeats: run the job alone (T_job, and its checksum), then start Atlas and run the same
- * job with interrupts on. The job never looks at Atlas. The doorbell interrupts it mid-job; the doorbell layer
+ * job with interrupts on. The job never looks at Atlas. The doorbell interrupts it mid-job; the doorbell interrupt (hal_atlas_irq)
  * clears msip and counts, then the hook only records which job step was running. Global interrupts are on
  * only around the job itself, and a watchdog (1 s) exits with code 3 if no doorbell ever comes.
  *
@@ -16,17 +16,17 @@
  * start until the doorbell callback began, step = job step when the doorbell hit, handler = the hook's own
  * length, ok = the run was correct.
  *
- * Timeline stamps (mcycle, cycles from `start`, the stamp taken just before the start command), for drawing
+ * Timeline timestamps (mcycle, cycles from `start`, the timestamp taken just before the start command), for drawing
  * the run: launched = the start command returned; irq_on = global interrupts enabled (the job starts right
  * after); cb_entry = doorbell callback started (= rang_at); cb_acked = msip cleared; hook_in / hook_out = the
  * hook's start and end; cb_exit = callback finished (glossy's register restore and mret follow, not stamped);
- * job_end = the job returned; end = interrupts off (= T_total). Each stamp costs a few cycles, which T_total
+ * job_end = the job returned; end = interrupts off (= T_total). Each timestamp costs a few cycles, which T_total
  * includes.
  *
  * Differences from a hand-written trap handler, forced by using glossy's trap path:
- *   - rang_at is stamped at the start of the doorbell callback (atlas_doorbell.last_entry), which is after
- *     glossy has saved all registers, so it is later than a stamp at the very first trap instruction.
- *   - glossy has no exit stamp, so "handler" is the hook's own length (stamp at the hook's start and end);
+ *   - rang_at is stamped at the start of the doorbell callback (atlas_irq_timestamps.entry), which is after
+ *     glossy has saved all registers, so it is later than a timestamp at the very first trap instruction.
+ *   - glossy has no exit timestamp, so "handler" is the hook's own length (timestamp at the hook's start and end);
  *     it leaves out clearing msip, counting, glossy's register save/restore and mret.
  *   - the job keeps its step in the volatile job_step (host_job_tracked: one extra store per step), because
  *     a C hook cannot read the job's register. T_job uses the same function, so overhead stays comparable.
@@ -34,14 +34,14 @@
  *
  * Pass (return 0): in every run exactly one doorbell came, the job checksum equals the job alone, the result
  * is golden and Atlas ended with STATUS 5 (ECALL).
- * Output: 20 x (one overlap line + one stamps line) of key=value, then *** PASSED *** or *** FAILED ***.
+ * Output: 20 x (one overlap line + one timestamps line) of key=value, then *** PASSED *** or *** FAILED ***.
  */
 #include <stdio.h>
 #include <stdint.h>
 
 #include "chip_config.h"
 #include "rocketcore.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 #include "atlas_run.h"
 
 #define REPEATS        10
@@ -77,8 +77,8 @@ void app_init() {
 int app_main() {
   int failures = 0;
 
-  atlas_doorbell_init();
-  atlas_doorbell_set_hook(on_doorbell, NULL);
+  atlas_irq_init();
+  atlas_irq_set_handler(on_doorbell, NULL);
   atlas_run_load_doorbell();
 
   for (unsigned s = 0; s < N_SIZES; s++) {
@@ -90,7 +90,7 @@ int app_main() {
       uint64_t t_job = get_cycles() - t0;
 
       mm_setup();
-      uint64_t count_before = atlas_doorbell.count;
+      uint64_t count_before = atlas_irq_count();
       watchdog_arm(WATCHDOG_TICKS);
 
       /* ---- timed: launch + job with interrupts on ---- */
@@ -108,7 +108,7 @@ int app_main() {
       watchdog_off();
 
       int ok = (checksum == reference);
-      ok &= (atlas_doorbell.count - count_before == 1);
+      ok &= (atlas_irq_count() - count_before == 1);
       ok &= mm_check();
       ok &= (atlas_run_status() == ATLAS_STATUS_DONE);
       if (!ok) {
@@ -118,14 +118,14 @@ int app_main() {
       uint64_t total = end - start;
       printf("overlap job=%lu T_job=%lu T_total=%lu overhead=%ld T_launch=%lu rang_at=%lu step=%lu handler=%lu ok=%d\n",
              (unsigned long)steps, (unsigned long)t_job, (unsigned long)total, (long)(total - t_job),
-             (unsigned long)(launched - start), (unsigned long)(atlas_doorbell.last_entry - start),
+             (unsigned long)(launched - start), (unsigned long)(atlas_irq_timestamps.entry - start),
              (unsigned long)irq_step, (unsigned long)(hook_end - hook_start), ok);
-      printf("stamps job=%lu launched=%lu irq_on=%lu cb_entry=%lu cb_acked=%lu hook_in=%lu hook_out=%lu cb_exit=%lu "
+      printf("timestamps job=%lu launched=%lu irq_on=%lu cb_entry=%lu cb_acked=%lu hook_in=%lu hook_out=%lu cb_exit=%lu "
              "job_end=%lu end=%lu\n",
              (unsigned long)steps, (unsigned long)(launched - start), (unsigned long)(irq_on - start),
-             (unsigned long)(atlas_doorbell.last_entry - start), (unsigned long)(atlas_doorbell.last_acked - start),
+             (unsigned long)(atlas_irq_timestamps.entry - start), (unsigned long)(atlas_irq_timestamps.acked - start),
              (unsigned long)(hook_start - start), (unsigned long)(hook_end - start),
-             (unsigned long)(atlas_doorbell.last_exit - start), (unsigned long)(job_end - start),
+             (unsigned long)(atlas_irq_timestamps.exit - start), (unsigned long)(job_end - start),
              (unsigned long)(end - start));
     }
   }

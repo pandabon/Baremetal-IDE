@@ -5,7 +5,7 @@
  * are the Atlas team's (credited in common/matmul_data.h).
  *
  * The host always runs its job (STEPS steps, far longer than two matmuls) with interrupts on; it never waits
- * or sleeps. Each case checks what the doorbell layer and the hooks saw. 3 repeats of four cases:
+ * or sleeps. Each case checks what the doorbell interrupt (hal_atlas_irq) and the hooks saw. 3 repeats of four cases:
  *   no_ring  the team kernel (no doorbell epilogue): 0 doorbells; the watchdog fires mid-job (after 50 mtime
  *            ticks, about 50k cycles) and is counted; Atlas finished (STATUS 5) with a golden result.
  *   error    a kernel that hits an illegal instruction before any doorbell: 0 doorbells, the watchdog fires,
@@ -39,7 +39,7 @@
 
 #include "chip_config.h"
 #include "rocketcore.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 #include "atlas_run.h"
 #include "matmul_data.h"  /* team_kernel, doorbell_kernel */
 
@@ -66,7 +66,7 @@ static volatile uint64_t step2;     /* job step at doorbell 2 */
 static volatile uint64_t ok1;       /* chain: result check after doorbell 1 */
 static volatile uint64_t ok2;       /* chain: result check after doorbell 2 */
 
-/* The doorbell hook (msip is already cleared and counted by the doorbell layer). */
+/* The doorbell hook (msip is already cleared and counted by the doorbell interrupt (hal_atlas_irq)). */
 static void on_doorbell(void *context) {
   (void)context;
   uint64_t n = n_db + 1;
@@ -79,7 +79,7 @@ static void on_doorbell(void *context) {
   if (mode == MODE_RERING) {
     /* Ring once more. Interrupts are off inside the handler, so the second trap is taken right after mret. */
     if (n == 1) {
-      atlas_doorbell_ring_self();
+      atlas_irq_ring_self();
     }
   } else if (mode == MODE_CHAIN) {
     /* Result 1: check it, clear it and launch Atlas again. Result 2: check it. */
@@ -149,8 +149,8 @@ int app_main() {
   int failures = 0;
   uint64_t t_total;
 
-  atlas_doorbell_init();
-  atlas_doorbell_set_hook(on_doorbell, NULL);
+  atlas_irq_init();
+  atlas_irq_set_handler(on_doorbell, NULL);
   watchdog_set_hook(on_timer);
 
   uint64_t reference = host_job_tracked(STEPS);   /* the job alone */

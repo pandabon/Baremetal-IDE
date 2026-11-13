@@ -49,7 +49,7 @@
 #include "chip_config.h"
 #include "rocketcore.h"
 #include "hal_atlas.h"
-#include "atlas_doorbell.h"
+#include "hal_atlas_irq.h"
 #include "atlas_run.h"
 #include "matmul_data.h"
 #include "atlas_jobs.h"
@@ -185,7 +185,7 @@ static void launch(int k) {
 static void on_doorbell(void *context) {
   (void)context;
   int done = next_step - 1;
-  step_doorbell[done] = atlas_doorbell.last_entry;
+  step_doorbell[done] = atlas_irq_timestamps.entry;
   step_inst1[done] = ATLAS->INSTCNT;
   uint32_t status = atlas_run_status();
   for (int spin = 0; spin < 1000 && status != ATLAS_STATUS_DONE; spin++) {
@@ -219,7 +219,7 @@ int app_main() {
   frame_init();
   load_jobs();
   data_setup();
-  atlas_doorbell_init();
+  atlas_irq_init();
 
   /* each piece alone (polled; the doorbell's msip is cleared afterwards) */
   uint32_t i0 = ATLAS->INSTCNT;
@@ -228,7 +228,7 @@ int app_main() {
   uint32_t s1 = atlas_run_poll(NULL);
   uint64_t t_atlas = get_cycles() - t0;
   uint32_t inst = ATLAS->INSTCNT - i0;
-  atlas_doorbell_ack();
+  atlas_irq_ack();
   t0 = get_cycles();
   prep_step(0);
   uint64_t t_prep = get_cycles() - t0;
@@ -246,7 +246,7 @@ int app_main() {
     for (int k = 0; k < STEPS; k++) {
       atlas_run_start();
       status_ok &= (atlas_run_poll(NULL) == ATLAS_STATUS_DONE);
-      atlas_doorbell_ack();
+      atlas_irq_ack();
       prep_step(k);
     }
     uint64_t t_serial = get_cycles() - t0;
@@ -259,8 +259,8 @@ int app_main() {
     memset(patches, 0, sizeof(patches));
     bad_status = 0;
     uint32_t msip_before = *(volatile uint32_t *)0x02000000UL;
-    uint64_t count0 = atlas_doorbell.count;
-    atlas_doorbell_set_hook(on_doorbell, NULL);
+    uint64_t count0 = atlas_irq_count();
+    atlas_irq_set_handler(on_doorbell, NULL);
     watchdog_arm(WATCHDOG_TICKS);
     run_start = get_cycles();
     launch(0);
@@ -273,16 +273,16 @@ int app_main() {
     }
     uint64_t prep_done = get_cycles();
     disable_global_interrupt();
-    while (atlas_doorbell.count - count0 < STEPS && bad_status == 0) {
+    while (atlas_irq_count() - count0 < STEPS && bad_status == 0) {
       asm volatile("wfi");               /* wakes on a pending interrupt even with interrupts off */
       enable_global_interrupt();
       disable_global_interrupt();
     }
     uint64_t end = get_cycles();
     watchdog_off();
-    atlas_doorbell_set_hook(NULL, NULL);
+    atlas_irq_set_handler(NULL, NULL);
 
-    uint64_t doorbells = atlas_doorbell.count - count0;
+    uint64_t doorbells = atlas_irq_count() - count0;
     ok = (bad_status == 0) && (doorbells == STEPS) && mm_check() && gelu_check() && patches_ok();
     failures += !ok;
     uint64_t total = end - run_start;
