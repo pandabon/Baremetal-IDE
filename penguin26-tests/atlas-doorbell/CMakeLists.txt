@@ -8,6 +8,10 @@
 #                   poll helpers, the host's own job, a watchdog, and the same matmul on Saturn (fp8_matmul.S).
 #   interrupt_cost/ atlas_doorbell_interrupt_cost: cost of one doorbell interrupt through glossy, and which clocks
 #                   run while the host sleeps in wfi.
+#   poll_baseline/  atlas_doorbell_poll_baseline: the matmul with the host polling STATUS, then the host job (serial).
+#   overlap/        atlas_doorbell_overlap: the matmul and the host job at the same time; the doorbell only acknowledges.
+#   check_in_handler/ atlas_doorbell_check_in_handler: the same, but the doorbell handler checks the result.
+#   edge_cases/     atlas_doorbell_edge_cases: no doorbell, an Atlas error, a re-ring, a handler that starts the next job.
 #
 #   make build CHIP=penguin26 PLATFORM=SIMS TARGET=atlas_doorbell_interrupt_cost
 ########################################################################################################################
@@ -32,7 +36,7 @@ function(atlas_doorbell_test name dir)
 endfunction()
 
 atlas_doorbell_test(atlas_doorbell_interrupt_cost interrupt_cost)
-foreach(_t )
+foreach(_t poll_baseline overlap check_in_handler edge_cases)
   if (EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/${_t})
     atlas_doorbell_test(atlas_doorbell_${_t} ${_t})
   endif()
